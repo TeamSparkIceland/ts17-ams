@@ -4,7 +4,7 @@
 #include "imd.h"
 #include "board.h"
 
-#define VERSION "1.0"
+#define VERSION "1.1"
 
 void bootup_checks();
 void prod_loop();
@@ -30,10 +30,6 @@ void main(void) {
     //bootup_checks();
     
     IO_SHUTDOWN_CTRL_SetHigh();
-    
-    //IO_FAN_CTRL_PWM_SetHigh();
-    //IO_PUMP_ENABLE_SetHigh();
-    
 
     while (1) {
         prod_loop();
