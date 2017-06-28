@@ -29,7 +29,11 @@ void main(void) {
     
     //bootup_checks();
     
-    IO_SHUTDOWN_CTRL_SetLow();
+    IO_SHUTDOWN_CTRL_SetHigh();
+    
+    //IO_FAN_CTRL_PWM_SetHigh();
+    //IO_PUMP_ENABLE_SetHigh();
+    
 
     while (1) {
         prod_loop();
@@ -51,10 +55,18 @@ void prod_loop() {
     if (BMS_check() == true) {
         printf("E|BMS Shutdown triggered|\r\n");
         Board_set_status(0xF);
-        IO_SHUTDOWN_CTRL_SetHigh();
-    } else {
         IO_SHUTDOWN_CTRL_SetLow();
+    } else {
+        IO_SHUTDOWN_CTRL_SetHigh();
         Board_set_status(0x1);
+    }
+    
+    if (IO_TSAL_ENABLE_GetValue() == 1) {
+        IO_FAN_CTRL_PWM_SetHigh();
+        IO_PUMP_ENABLE_SetHigh();
+    } else {
+        IO_FAN_CTRL_PWM_SetLow();
+        IO_PUMP_ENABLE_SetLow();
     }
 }
 
