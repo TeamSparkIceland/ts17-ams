@@ -111,11 +111,14 @@
 void SYSTEM_Initialize(void)
 {
 
+    INTERRUPT_Initialize();
     PIN_MANAGER_Initialize();
     OSCILLATOR_Initialize();
     SPI1_Initialize();
     CCP5_Initialize();
     ADC_Initialize();
+    EXT_INT_Initialize();
+    TMR0_Initialize();
     EUSART1_Initialize();
 }
 

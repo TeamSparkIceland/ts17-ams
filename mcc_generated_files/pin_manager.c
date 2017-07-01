@@ -80,7 +80,7 @@ void PIN_MANAGER_Initialize(void)
     /**
     WPUx registers
     */ 
-    WPUB = 0xFF;
+    WPUB = 0xF8;
     INTCON2bits.nRBPU = 0;
 
     

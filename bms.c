@@ -12,6 +12,14 @@ float BMS_low_voltage = 3.2;
 float BMS_high_voltage = 4.18;
 float BMS_low_temperature = 5.0; // Degrees C
 float BMS_high_temperature = 58.0; // Degrees C
+float lowest_voltage;
+float BMS_discharge_voltage;
+bool BMS_discharge_enabled = false;
+
+static DischargeState discharge_state;
+
+uint8_t discharge_part = 0;
+uint8_t discharge_completed = 0;
 
 static uint8_t configs[TOTAL_IC][6];
 static uint16_t aux_codes[TOTAL_IC][6];
@@ -23,6 +31,16 @@ static Cell cell_data[TOTAL_IC][12];
 //uint8_t BMS_default_config[6] = {0xF8, 0x7C, 0xAF, 0x41, 0x00, 0x00};  
 uint8_t BMS_default_config[6] = {0x0E, 0x00, 0x00, 0x00, 0x00, 0x00};  
 
+void reset_configs() {
+    //uint16_t vuv = (((BMS_low_voltage * 10000)/16)-1)
+    //uint16_t vov = 0;
+    for (uint8_t i = 0; i<TOTAL_IC; i++) {
+        for (uint8_t j = 0; j<6; j++) {
+            configs[i][j] = BMS_default_config[j];
+        }   
+    }
+}
+
 /**
  * Initializes the AMS isoSPI module and the BMSs.
  */
@@ -31,6 +49,8 @@ void BMS_Initialize() {
     LTC6804_initialize();
     BMS_report = false;
     BMS_data_report = false;
+    
+    reset_configs();
 }
 
 /**
@@ -45,6 +65,7 @@ void BMS_set_thresholds(float cell_low, float cell_high, float sensor_low, float
     BMS_high_voltage = cell_high;
     BMS_low_temperature = sensor_low;
     BMS_high_temperature = sensor_high;
+    reset_configs();
 }
 
 /**
@@ -67,6 +88,7 @@ uint8_t check_cell_voltages() {
     uint8_t result;
     uint16_t cell_code;
     bool pec_error = false;
+    lowest_voltage = BMS_high_voltage;
     
     BMS_report && printf("Voltages\r\n");  
     wakeup_idle();
@@ -84,6 +106,9 @@ uint8_t check_cell_voltages() {
         for (uint8_t l = 0; l<12; l++) {
             cell_code = cell_codes[k][l];
             cell_data[k][l].voltage = (float)(cell_code/10000.0);
+            if (cell_data[k][l].voltage < lowest_voltage) {
+                lowest_voltage = cell_data[k][l].voltage;
+            }
             cell_data[k][l].voltage_pec_failure = pec_error;
             BMS_report && printf("\r\n");
         }
@@ -198,6 +223,12 @@ void send_data_packet() {
             } else {
                 printf("%d|", (uint16_t)(cell_data[ic][cell].temperature));
             }
+            
+            if (cell_data[ic][cell].discharge_enabled == true) {
+                printf("1|");
+            } else {
+                printf("0|");
+            }
         }
         printf("\r\n");
     }
@@ -246,17 +277,13 @@ bool BMS_check() {
 }
 
 /**
- * Run all measurements for the BMSs, voltages and temperatures. This also 
+ * Run all measurements 
+ * for the BMSs, voltages and temperatures. This also 
  * prepares the BMS configurations as the chips will forget their configurations
  * when they go to sleep.
  */
 void BMS_gather() {
-    static uint8_t rx_cfg[TOTAL_IC][8];
-    for (uint8_t i = 0; i<TOTAL_IC; i++) {
-        for (uint8_t j = 0; j<6; j++) {
-            configs[i][j] = BMS_default_config[j];
-        }
-    }
+    //static uint8_t rx_cfg[TOTAL_IC][8];
    
     wakeup_sleep();
     
@@ -289,6 +316,75 @@ bool BMS_is_error() { return false; }
  */
 uint16_t BMS_get_error_code() { return 0; }
 
+bool discharge(uint8_t part) {
+    uint16_t discharge_bits = 0; // Needs to have bits >= TOTAL_SENSORS
+    bool completed = true;
+    
+    for (uint8_t bms_id = 0; bms_id != TOTAL_IC; bms_id++) {
+    
+        discharge_bits = 0; // Reset between bms modules
+    
+        for (uint8_t cell_id = part; cell_id < TOTAL_SENSORS; cell_id = cell_id + 3) {
+            
+            if (cell_data[bms_id][cell_id].discharge_enabled == false) { continue; }
+            
+            if ((cell_id != part) && (cell_id != part+3) && (cell_id != part+6) && cell_id != part+9) {
+                cell_data[bms_id][cell_id].discharge_enabled = false;
+                continue;
+            }
+        
+            if (cell_data[bms_id][cell_id].voltage <= BMS_discharge_voltage) {
+                cell_data[bms_id][cell_id].discharge_enabled = false;
+            } else {
+                completed = false;
+                cell_data[bms_id][cell_id].discharge_enabled = true;
+                discharge_bits |= 1u << cell_id;
+            }
+            
+        }
+        
+        // For CFGR4 we have DCC8 DCC7 DCC6 DCC5 DCC4  DCC3  DCC2  DCC1
+        // For CFGR5 we have x    x    x    x    DCC12 DCC11 DCC10 DCC9
+        
+        // Discharge_bits = xxxx1111 11111111 (12 to 1) or (11 to 0))
+        
+        /*
+         *   00000010 01001001 (stage 0)
+         *   00000100 10010010 (stage 1)
+         *   00001001 00100100 (stage 2)
+         * 
+         * Stage 1
+         *   00000000 11111111 (0x00FF)
+         * & 00000010 01001001 (stage 1)
+         * -------------------
+         *   00000000 01001001 (stage 1 saved)
+         * 
+         *   00000000 11111111 (0x00FF)
+         * & 00000100 10010010 (stage 2)
+         * -------------------
+         *   00000000 10010010
+         * | 00000000 01001001 (stage 1 saved)
+         * -------------------
+         *   00000000 11011011
+         * 
+         * 
+         * 
+         * Better to take the top half of the config
+         * 
+         *   xxxxxxxx 00000000
+         * | 00000000 ssssssss
+         * 
+         */
+        
+        // Simulate for now
+        configs[bms_id][4] = 0x00FF & discharge_bits;
+        configs[bms_id][5] = (0x0F00 & discharge_bits) >> 8u;
+    }
+    return completed;
+}
+
+
+
 /**
  * Temporary test function to verify communications between the AMS board and
  * the BMSs.
@@ -311,3 +407,83 @@ void BMS_test_stuff() {
     result = LTC6804_rdcv(CELL_CH_ALL, cell_codes);
     printf("rdcv result: %d\r\n", result);
 }
+
+void BMS_set_discharge(bool state) {
+    if (state == true) {
+        if (lowest_voltage > BMS_low_voltage) {
+            BMS_discharge_voltage = lowest_voltage;
+            BMS_discharge_enabled = true;
+            discharge_part = 0;
+            discharge_completed = 0;
+            // Set enable discharge on all cells
+            for (uint8_t i = 0; i<TOTAL_IC; i++) {
+                for (uint8_t j = 0; j<TOTAL_SENSORS; j++) {
+                    cell_data[i][j].discharge_enabled = true;
+                }
+            }
+        }
+    } else {
+        BMS_discharge_enabled = false;
+        reset_configs();
+    }
+}
+
+void BMS_clear_discharge() {
+    reset_configs();
+}
+
+void BMS_handle_discharge() {
+    if (BMS_discharge_enabled == false) {
+        printf("BMS_discharge_enabled is false, lest not do anything.\r\n");
+        return;
+    }
+    
+    if (BMS_discharge_voltage < BMS_low_voltage) {
+        printf("Discharge cancelled because threshold-voltage is below minimum voltage\r\n");
+        BMS_set_discharge(false);
+        return;
+    }
+    
+    printf("Discharging...\r\n");
+    printf("Target voltage %f V\r\n", BMS_discharge_voltage);
+    if (discharge(discharge_part) == true) {
+        discharge_completed |= 1u << discharge_part;
+    }
+    
+    if (discharge_completed == 0x07) {
+        BMS_set_discharge(false);
+        return;
+    }
+    
+    if (discharge_part == 2) {
+        discharge_part = 0;
+    } else {
+        discharge_part++;
+    }
+}
+
+/*
+ * On Discharge Request (CDEA) or (cdea)
+ * Go through all cells and pick the lowest voltage as threshold voltage
+ * While doing so, switch discharge on for all cells
+ * 
+ * In BMS loop:
+ * if cell voltage is below or equal to threshold voltage, set discharge to
+ * false for that cell
+ * When discharge is decided for each cell it's added to a bitmask that gets
+ * applied to the bms after the cell-loop has finished
+ * 
+ */
+
+
+
+/*
+ * Part argument stands for which of 3 possible discharge configurations toad
+ * use: 0: discharge 0, 3, 6, 9
+ *      1: discharge 1, 4, 7, 10
+ *      2: discharge 2, 5, 8, 11
+ * 
+ * This is done to avoid thermal hot-spots when discharging (making sure that
+ * two discharge resistors are inactive between each active one)
+ */
+

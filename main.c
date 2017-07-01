@@ -4,7 +4,13 @@
 #include "imd.h"
 #include "board.h"
 
-#define VERSION "1.1"
+#define VERSION "1.2"
+
+#define PERIOD 0x0001
+#define ZERO 0x0000
+
+#define DISCHARGE_CYCLE 60
+#define REST_CYCLE 30
 
 void bootup_checks();
 void prod_loop();
@@ -13,6 +19,10 @@ void test_loop();
 
 uint8_t counter=1;
 bool reverse = false;
+bool toggle_discharge = false;
+uint8_t timer_counter;
+
+bool discharge_rest_period = false;
 
 void main(void) {
     SYSTEM_Initialize();
@@ -22,6 +32,7 @@ void main(void) {
     BMS_Initialize();
     BMS_set_reporting(false, true);
     BMS_set_thresholds(3.2, 4.18, 5.0, 55.0);
+    BMS_set_discharge(true);
     
     IMD_Initialize();
     
@@ -31,6 +42,10 @@ void main(void) {
     
     IO_SHUTDOWN_CTRL_SetHigh();
 
+    TMR0_StartTimer();
+    
+    timer_counter = DISCHARGE_CYCLE;
+    
     while (1) {
         prod_loop();
     }
@@ -50,11 +65,11 @@ void prod_loop() {
     BMS_gather();
     if (BMS_check() == true) {
         printf("E|BMS Shutdown triggered|\r\n");
-        Board_set_status(0xF);
+        //Board_set_status(0xF);
         IO_SHUTDOWN_CTRL_SetLow();
     } else {
         IO_SHUTDOWN_CTRL_SetHigh();
-        Board_set_status(0x1);
+        //Board_set_status(0x1);
     }
     
     if (IO_TSAL_ENABLE_GetValue() == 1) {
@@ -64,14 +79,29 @@ void prod_loop() {
         IO_FAN_CTRL_PWM_SetLow();
         IO_PUMP_ENABLE_SetLow();
     }
-}
-
-void test_loop_2() {
-    printf("%u\r\n", counter++);
-}
-
-void test_loop() {
-    BMS_check();
-    //printf(".");
-    return;
+    
+    if (toggle_discharge == true) {
+        BMS_set_discharge(true);
+        toggle_discharge = false;
+    }
+    
+    if (TMR0IF) {
+        timer_counter--;
+        if (timer_counter == 0) {
+            discharge_rest_period = !discharge_rest_period;
+            if (discharge_rest_period) {
+                timer_counter = REST_CYCLE;
+            } else {
+                timer_counter = DISCHARGE_CYCLE;
+            }
+        }
+        
+        TMR0IF = 0;
+    }
+    
+    if (discharge_rest_period == false) {
+        BMS_handle_discharge();
+    } else {
+        BMS_clear_discharge();
+    }
 }

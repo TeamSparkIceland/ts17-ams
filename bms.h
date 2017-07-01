@@ -26,7 +26,12 @@ extern "C" {
         bool temperature_pec_failure;
         uint8_t voltage_error_count;
         uint8_t temperature_error_count;
+        bool discharge_enabled;
     } Cell;
+    
+    typedef struct dischargeState {
+        uint8_t state;
+    } DischargeState;
     
     void BMS_Initialize();
 
@@ -43,6 +48,10 @@ extern "C" {
     void BMS_set_thresholds(float cell_low, float cell_high, float sensor_low, float sensor_high);
     
     void BMS_test_stuff();
+    
+    void BMS_set_discharge(bool state);
+    void BMS_handle_discharge();
+    void BMS_clear_discharge();
 
 #ifdef	__cplusplus
 }
