@@ -4,7 +4,7 @@
 #include "imd.h"
 #include "board.h"
 
-#define VERSION "1.2"
+#define VERSION "2.1"
 
 #define PERIOD 0x0001
 #define ZERO 0x0000
@@ -19,8 +19,10 @@ void test_loop();
 
 uint8_t counter=1;
 bool reverse = false;
-bool toggle_discharge = false;
 uint8_t timer_counter;
+uint8_t inbound_data;
+
+bool enable_discharge = false;
 
 bool discharge_rest_period = false;
 
@@ -28,7 +30,7 @@ void main(void) {
     SYSTEM_Initialize();
     
     printf("\r\nAMS v. %s\r\n", VERSION);
-    
+ 
     BMS_Initialize();
     BMS_set_reporting(false, true);
     BMS_set_thresholds(3.2, 4.18, 5.0, 55.0);
@@ -80,9 +82,11 @@ void prod_loop() {
         IO_PUMP_ENABLE_SetLow();
     }
     
-    if (toggle_discharge == true) {
+    if ((enable_discharge) && (!BMS_is_discharge_enabled())) {
         BMS_set_discharge(true);
-        toggle_discharge = false;
+        printf("S|%d|", (uint16_t)(BMS_get_target_voltage() * 1000));
+    } else if ((!enable_discharge) && (BMS_is_discharge_enabled())) {
+        BMS_set_discharge(false);
     }
     
     if (TMR0IF) {
@@ -97,6 +101,19 @@ void prod_loop() {
         }
         
         TMR0IF = 0;
+        
+        // Command detection
+        if (EUSART1_DataReady) {
+            inbound_data = EUSART1_Read();
+            switch (inbound_data) {
+                case 'D':
+                    enable_discharge = false;
+                    break;
+                case 'E':
+                    enable_discharge = true;
+                    break;
+            }
+        }
     }
     
     if (discharge_rest_period == false) {
