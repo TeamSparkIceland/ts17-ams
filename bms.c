@@ -305,6 +305,10 @@ void BMS_gather() {
     send_data_packet();
 }
 
+float BMS_get_target_voltage() {
+    return BMS_discharge_voltage;
+}
+
 /**
  * @return true if there was an error during last BMS_check call.
  */
@@ -408,6 +412,10 @@ void BMS_test_stuff() {
     printf("rdcv result: %d\r\n", result);
 }
 
+bool BMS_is_discharge_enabled() {
+    return BMS_discharge_enabled;
+}
+
 void BMS_set_discharge(bool state) {
     if (state == true) {
         if (lowest_voltage > BMS_low_voltage) {
@@ -425,6 +433,11 @@ void BMS_set_discharge(bool state) {
     } else {
         BMS_discharge_enabled = false;
         reset_configs();
+        for (uint8_t i = 0; i<TOTAL_IC; i++) {
+                for (uint8_t j = 0; j<TOTAL_SENSORS; j++) {
+                    cell_data[i][j].discharge_enabled = false;
+                }
+            }
     }
 }
 

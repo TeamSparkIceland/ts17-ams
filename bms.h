@@ -49,6 +49,8 @@ extern "C" {
     
     void BMS_test_stuff();
     
+    bool BMS_is_discharge_enabled();
+    float BMS_get_target_voltage();
     void BMS_set_discharge(bool state);
     void BMS_handle_discharge();
     void BMS_clear_discharge();
